@@ -3,6 +3,8 @@ import numpy as np
 import pytesseract
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
+import xlsxwriter
 
 def display(im_path):
     dpi = 80
@@ -28,15 +30,17 @@ def display(im_path):
 def save_and_show_image(name, image):
     cv2.imwrite(f"temp/{name}.jpg", image)
     display(f"temp/{name}.jpg")
+
 def detect_boxes(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, threshold = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(threshold, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, hierarchy = cv2.findContours(threshold, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     rectangle_coordinates = []
 
     # Find the largest contour (which approximates the document area)
-    largest_contour = max(contours, key=cv2.contourArea)
+    largest_contour_index = np.argmax([cv2.contourArea(cnt) for cnt in contours])
+    largest_contour = contours[largest_contour_index]
     cv2.drawContours(image, [largest_contour], -1, (0, 255, 0), 3)
     save_and_show_image("largest_contour.jpg", image)
 
@@ -50,7 +54,11 @@ def detect_boxes(image):
     x, y, w, h = cv2.boundingRect(largest_contour)
 
     # Iterate through all contours
-    for contour in contours:
+    for i, contour in enumerate(contours):
+        # Ignore contours that are the largest contour or have no parent
+        if i == largest_contour_index or hierarchy[0][i][3] == -1:
+            continue
+
         # Calculate the area of the contour
         area = cv2.contourArea(contour)
         # Compute the percentage of the document area occupied by the contour
@@ -109,7 +117,16 @@ def process_image(image_path):
 
     rectangle_coordinates = detect_boxes(image)
 
+    # Draw rectangles over the identified regions
+    for rect in rectangle_coordinates:
+        x, y, w, h = rect
+        cv2.rectangle(image, (x, y), (x + w, y + h), (255, 255, 255), cv2.FILLED)
+
+    # Display the modified image with rectangles covering the identified regions
+    save_and_show_image("covered_rectangles.jpg", image)
+
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # save_and_show_image("gray_image.jpg", gray_image)
     _, threshold_image = cv2.threshold(gray_image, 230, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     equalized_image = cv2.equalizeHist(threshold_image)
 
@@ -125,8 +142,20 @@ def process_image(image_path):
 
     linked_data = process_rectangles(rectangle_coordinates, words_info, image)
 
+    # Create the output directory if it doesn't exist
+    output_dir = 'output'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Define the output file path
+    output_file = os.path.join(output_dir, 'output.xlsx')
+
+    # Convert the linked data to a DataFrame
     df = pd.DataFrame(list(linked_data.items()), columns=['Word', 'Information'])
-    df.to_excel('output.xlsx', index=False)
+
+    # Write the DataFrame to an Excel file using ExcelWriter
+    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
 
 if __name__ == "__main__":
     process_image('data/test_image.jpg')
